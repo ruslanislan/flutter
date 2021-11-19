@@ -2,8 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// @dart = 2.8
-
 import 'package:flutter/cupertino.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -276,10 +274,10 @@ void main() {
   testWidgets('test edge swipes work with media query padding (LTR)', (WidgetTester tester) async {
     await tester.pumpWidget(
       CupertinoApp(
-        builder: (BuildContext context, Widget navigator) {
+        builder: (BuildContext context, Widget? navigator) {
           return MediaQuery(
             data: const MediaQueryData(padding: EdgeInsets.only(left: 40)),
-            child: navigator,
+            child: navigator!,
           );
         },
         home: const Placeholder(),
@@ -320,12 +318,12 @@ void main() {
   testWidgets('test edge swipes work with media query padding (RLT)', (WidgetTester tester) async {
     await tester.pumpWidget(
       CupertinoApp(
-        builder: (BuildContext context, Widget navigator) {
+        builder: (BuildContext context, Widget? navigator) {
           return Directionality(
             textDirection: TextDirection.rtl,
             child: MediaQuery(
               data: const MediaQueryData(padding: EdgeInsets.only(right: 40)),
-              child: navigator,
+              child: navigator!,
             ),
           );
         },
@@ -471,12 +469,81 @@ void main() {
     expect(find.text('subpage'), findsOneWidget);
     expect(find.text('home'), findsNothing);
 
+<<<<<<< HEAD
     navigator.currentState.pop();
+=======
+    navigator.currentState!.pop();
+>>>>>>> 18116933e77adc82f80866c928266a5b4f1ed645
     await tester.pump();
 
     expect(find.text('subpage'), findsOneWidget);
     expect(find.text('home'), findsOneWidget);
   });
+<<<<<<< HEAD
+=======
+
+  testWidgets('CupertinoPage restores its state', (WidgetTester tester) async {
+    await tester.pumpWidget(
+      RootRestorationScope(
+        restorationId: 'root',
+        child: MediaQuery(
+          data: const MediaQueryData(),
+          child: Directionality(
+            textDirection: TextDirection.ltr,
+            child: Navigator(
+              onPopPage: (Route<dynamic> route, dynamic result) { return false; },
+              pages: const <Page<Object?>>[
+                CupertinoPage<void>(
+                  restorationId: 'p1',
+                  child: TestRestorableWidget(restorationId: 'p1'),
+                ),
+              ],
+              restorationScopeId: 'nav',
+              onGenerateRoute: (RouteSettings settings) {
+                return CupertinoPageRoute<void>(
+                  settings: settings,
+                  builder: (BuildContext context) {
+                    return TestRestorableWidget(restorationId: settings.name!);
+                  },
+                );
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('p1'), findsOneWidget);
+    expect(find.text('count: 0'), findsOneWidget);
+
+    await tester.tap(find.text('increment'));
+    await tester.pump();
+    expect(find.text('count: 1'), findsOneWidget);
+
+    tester.state<NavigatorState>(find.byType(Navigator)).restorablePushNamed('p2');
+    await tester.pumpAndSettle();
+
+    expect(find.text('p1'), findsNothing);
+    expect(find.text('p2'), findsOneWidget);
+
+    await tester.tap(find.text('increment'));
+    await tester.pump();
+    await tester.tap(find.text('increment'));
+    await tester.pump();
+    expect(find.text('count: 2'), findsOneWidget);
+
+    await tester.restartAndRestore();
+
+    expect(find.text('p2'), findsOneWidget);
+    expect(find.text('count: 2'), findsOneWidget);
+
+    tester.state<NavigatorState>(find.byType(Navigator)).pop();
+    await tester.pumpAndSettle();
+
+    expect(find.text('p1'), findsOneWidget);
+    expect(find.text('count: 1'), findsOneWidget);
+  });
+>>>>>>> 18116933e77adc82f80866c928266a5b4f1ed645
 }
 
 class RtlOverrideWidgetsDelegate extends LocalizationsDelegate<WidgetsLocalizations> {
@@ -496,16 +563,26 @@ class RtlOverrideWidgetsLocalization implements WidgetsLocalizations {
 }
 
 class KeepsStateTestWidget extends StatefulWidget {
+<<<<<<< HEAD
   const KeepsStateTestWidget({this.navigatorKey});
 
   final Key navigatorKey;
+=======
+  const KeepsStateTestWidget({Key? key, this.navigatorKey}) : super(key: key);
+
+  final Key? navigatorKey;
+>>>>>>> 18116933e77adc82f80866c928266a5b4f1ed645
 
   @override
   State<KeepsStateTestWidget> createState() => _KeepsStateTestWidgetState();
 }
 
 class _KeepsStateTestWidgetState extends State<KeepsStateTestWidget> {
+<<<<<<< HEAD
   String _subpage = 'subpage';
+=======
+  String? _subpage = 'subpage';
+>>>>>>> 18116933e77adc82f80866c928266a5b4f1ed645
 
   @override
   Widget build(BuildContext context) {
@@ -514,7 +591,11 @@ class _KeepsStateTestWidgetState extends State<KeepsStateTestWidget> {
         key: widget.navigatorKey,
         pages: <Page<void>>[
           const CupertinoPage<void>(child: Text('home')),
+<<<<<<< HEAD
           if (_subpage != null) CupertinoPage<void>(child: Text(_subpage)),
+=======
+          if (_subpage != null) CupertinoPage<void>(child: Text(_subpage!)),
+>>>>>>> 18116933e77adc82f80866c928266a5b4f1ed645
         ],
         onPopPage: (Route<dynamic> route, dynamic result) {
           if (!route.didPop(result)) {
@@ -529,3 +610,45 @@ class _KeepsStateTestWidgetState extends State<KeepsStateTestWidget> {
     );
   }
 }
+<<<<<<< HEAD
+=======
+
+class TestRestorableWidget extends StatefulWidget {
+  const TestRestorableWidget({Key? key, required this.restorationId}) : super(key: key);
+
+  final String restorationId;
+
+  @override
+  State<StatefulWidget> createState() => _TestRestorableWidgetState();
+}
+
+class _TestRestorableWidgetState extends State<TestRestorableWidget> with RestorationMixin {
+  @override
+  String? get restorationId => widget.restorationId;
+
+  final RestorableInt counter = RestorableInt(0);
+
+  @override
+  void restoreState(RestorationBucket? oldBucket, bool initialRestore) {
+    registerForRestoration(counter, 'counter');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: <Widget>[
+        Text(widget.restorationId),
+        Text('count: ${counter.value}'),
+        CupertinoButton(
+          onPressed: () {
+            setState(() {
+              counter.value++;
+            });
+          },
+          child: const Text('increment'),
+        ),
+      ],
+    );
+  }
+}
+>>>>>>> 18116933e77adc82f80866c928266a5b4f1ed645

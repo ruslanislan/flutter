@@ -2,13 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// @dart = 2.8
-
 import 'dart:math' as math;
 
-import 'package:flutter_test/flutter_test.dart';
-import 'package:flutter/animation.dart';
 import 'package:flutter/widgets.dart';
+import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   test('toString control test', () {
@@ -69,6 +66,7 @@ void main() {
     assertMaximumSlope(Curves.easeOutSine, 20.0);
     assertMaximumSlope(Curves.easeOutQuad, 20.0);
     assertMaximumSlope(Curves.easeOutCubic, 20.0);
+    assertMaximumSlope(Curves.easeInOutCubicEmphasized, 20.0);
     assertMaximumSlope(Curves.easeOutQuart, 20.0);
     assertMaximumSlope(Curves.easeOutQuint, 20.0);
     assertMaximumSlope(Curves.easeOutExpo, 20.0);
@@ -173,6 +171,15 @@ void main() {
     expect(d2, lessThan(d1));
   });
 
+  test('ThreePointCubic interpolates midpoint', () {
+    const ThreePointCubic test = ThreePointCubic(
+      Offset(0.05, 0), Offset(0.133333, 0.06),
+      Offset(0.166666, 0.4),
+      Offset(0.208333, 0.82), Offset(0.25, 1),
+    );
+    expect(test.transform(0.166666), equals(0.4));
+  });
+
   test('Invalid transform parameter should assert', () {
     expect(() => const SawTooth(2).transform(-0.0001), throwsAssertionError);
     expect(() => const SawTooth(2).transform(1.0001), throwsAssertionError);
@@ -191,6 +198,9 @@ void main() {
 
     expect(() => const Cubic(0.42, 0.0, 0.58, 1.0).transform(-0.0001), throwsAssertionError);
     expect(() => const Cubic(0.42, 0.0, 0.58, 1.0).transform(1.0001), throwsAssertionError);
+
+    expect(() => Curves.easeInOutCubicEmphasized.transform(-0.0001), throwsAssertionError);
+    expect(() => Curves.easeInOutCubicEmphasized.transform(1.0001), throwsAssertionError);
 
     expect(() => Curves.decelerate.transform(-0.0001), throwsAssertionError);
     expect(() => Curves.decelerate.transform(1.0001), throwsAssertionError);
@@ -230,6 +240,9 @@ void main() {
     expect(Curves.easeInOutExpo.transform(0), 0);
     expect(Curves.easeInOutExpo.transform(1), 1);
 
+    expect(Curves.easeInOutCubicEmphasized.transform(0), 0);
+    expect(Curves.easeInOutCubicEmphasized.transform(1), 1);
+
     expect(const FlippedCurve(Curves.easeInOutExpo).transform(0), 0);
     expect(const FlippedCurve(Curves.easeInOutExpo).transform(1), 1);
 
@@ -249,7 +262,7 @@ void main() {
   test('CatmullRomSpline interpolates values properly', () {
     final CatmullRomSpline curve = CatmullRomSpline(
       const <Offset>[
-        Offset(0.0, 0.0),
+        Offset.zero,
         Offset(0.01, 0.25),
         Offset(0.2, 0.25),
         Offset(0.33, 0.25),
@@ -276,9 +289,6 @@ void main() {
 
   test('CatmullRomSpline enforces contract', () {
     expect(() {
-      CatmullRomSpline(null);
-    }, throwsAssertionError);
-    expect(() {
       CatmullRomSpline(const <Offset>[]);
     }, throwsAssertionError);
     expect(() {
@@ -301,7 +311,7 @@ void main() {
   test('CatmullRomSpline interpolates values properly when precomputed', () {
     final CatmullRomSpline curve = CatmullRomSpline.precompute(
       const <Offset>[
-        Offset(0.0, 0.0),
+        Offset.zero,
         Offset(0.01, 0.25),
         Offset(0.2, 0.25),
         Offset(0.33, 0.25),
@@ -327,9 +337,6 @@ void main() {
   });
 
   test('CatmullRomSpline enforces contract when precomputed', () {
-    expect(() {
-      CatmullRomSpline.precompute(null);
-    }, throwsAssertionError);
     expect(() {
       CatmullRomSpline.precompute(const <Offset>[]);
     }, throwsAssertionError);
@@ -396,9 +403,6 @@ void main() {
 
   test('CatmullRomCurve enforces contract', () {
     expect(() {
-      CatmullRomCurve(null);
-    }, throwsAssertionError);
-    expect(() {
       CatmullRomCurve(const <Offset>[]);
     }, throwsAssertionError);
     expect(() {
@@ -410,14 +414,15 @@ void main() {
 
     // Monotonically increasing in X.
     expect(
-        CatmullRomCurve.validateControlPoints(
-          const <Offset>[
-            Offset(0.2, 0.25),
-            Offset(0.01, 0.25),
-          ],
-          tension: 0.0,
-        ),
-        isFalse);
+      CatmullRomCurve.validateControlPoints(
+        const <Offset>[
+          Offset(0.2, 0.25),
+          Offset(0.01, 0.25),
+        ],
+        tension: 0.0,
+      ),
+      isFalse,
+    );
     expect(() {
       CatmullRomCurve(
         const <Offset>[
@@ -430,14 +435,15 @@ void main() {
 
     // X within range (0.0, 1.0).
     expect(
-        CatmullRomCurve.validateControlPoints(
-          const <Offset>[
-            Offset(0.2, 0.25),
-            Offset(1.01, 0.25),
-          ],
-          tension: 0.0,
-        ),
-        isFalse);
+      CatmullRomCurve.validateControlPoints(
+        const <Offset>[
+          Offset(0.2, 0.25),
+          Offset(1.01, 0.25),
+        ],
+        tension: 0.0,
+      ),
+      isFalse,
+    );
     expect(() {
       CatmullRomCurve(
         const <Offset>[
@@ -517,9 +523,6 @@ void main() {
   });
 
   test('CatmullRomCurve enforces contract when precomputed', () {
-    expect(() {
-      CatmullRomCurve.precompute(null);
-    }, throwsAssertionError);
     expect(() {
       CatmullRomCurve.precompute(const <Offset>[]);
     }, throwsAssertionError);

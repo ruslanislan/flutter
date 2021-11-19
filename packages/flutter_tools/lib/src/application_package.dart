@@ -2,100 +2,38 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import 'dart:async';
-import 'dart:collection';
-
-import 'package:meta/meta.dart';
-import 'package:xml/xml.dart';
-
-import 'android/gradle.dart';
-import 'base/common.dart';
 import 'base/context.dart';
 import 'base/file_system.dart';
-import 'base/io.dart';
-import 'base/process.dart';
-import 'base/user_messages.dart';
 import 'build_info.dart';
-import 'fuchsia/application_package.dart';
-import 'globals.dart' as globals;
-import 'ios/plist_parser.dart';
-import 'linux/application_package.dart';
-import 'macos/application_package.dart';
-import 'project.dart';
-import 'tester/flutter_tester.dart';
-import 'web/web_device.dart';
-import 'windows/application_package.dart';
 
-class ApplicationPackageFactory {
-  static ApplicationPackageFactory get instance => context.get<ApplicationPackageFactory>();
+abstract class ApplicationPackageFactory {
+  static ApplicationPackageFactory? get instance => context.get<ApplicationPackageFactory>();
 
+  /// Create an [ApplicationPackage] for the given platform.
   Future<ApplicationPackage> getPackageForPlatform(
     TargetPlatform platform, {
     BuildInfo buildInfo,
     File applicationBinary,
-  }) async {
-    switch (platform) {
-      case TargetPlatform.android:
-      case TargetPlatform.android_arm:
-      case TargetPlatform.android_arm64:
-      case TargetPlatform.android_x64:
-      case TargetPlatform.android_x86:
-        if (globals.androidSdk?.licensesAvailable == true  && globals.androidSdk?.latestVersion == null) {
-          await checkGradleDependencies();
-        }
-        return applicationBinary == null
-            ? await AndroidApk.fromAndroidProject(FlutterProject.current().android)
-            : AndroidApk.fromApk(applicationBinary);
-      case TargetPlatform.ios:
-        return applicationBinary == null
-            ? await IOSApp.fromIosProject(FlutterProject.current().ios, buildInfo)
-            : IOSApp.fromPrebuiltApp(applicationBinary);
-      case TargetPlatform.tester:
-        return FlutterTesterApp.fromCurrentDirectory(globals.fs);
-      case TargetPlatform.darwin_x64:
-        return applicationBinary == null
-            ? MacOSApp.fromMacOSProject(FlutterProject.current().macos)
-            : MacOSApp.fromPrebuiltApp(applicationBinary);
-      case TargetPlatform.web_javascript:
-        if (!FlutterProject.current().web.existsSync()) {
-          return null;
-        }
-        return WebApplicationPackage(FlutterProject.current());
-      case TargetPlatform.linux_x64:
-        return applicationBinary == null
-            ? LinuxApp.fromLinuxProject(FlutterProject.current().linux)
-            : LinuxApp.fromPrebuiltApp(applicationBinary);
-      case TargetPlatform.windows_x64:
-        return applicationBinary == null
-            ? WindowsApp.fromWindowsProject(FlutterProject.current().windows)
-            : WindowsApp.fromPrebuiltApp(applicationBinary);
-      case TargetPlatform.fuchsia_arm64:
-      case TargetPlatform.fuchsia_x64:
-        return applicationBinary == null
-            ? FuchsiaApp.fromFuchsiaProject(FlutterProject.current().fuchsia)
-            : FuchsiaApp.fromPrebuiltApp(applicationBinary);
-    }
-    assert(platform != null);
-    return null;
-  }
+  });
 }
 
 abstract class ApplicationPackage {
-  ApplicationPackage({ @required this.id })
+  ApplicationPackage({ required this.id })
     : assert(id != null);
 
   /// Package ID from the Android Manifest or equivalent.
   final String id;
 
-  String get name;
+  String? get name;
 
-  String get displayName => name;
+  String? get displayName => name;
 
-  File get packagesFile => null;
+  File? get packagesFile => null;
 
   @override
   String toString() => displayName ?? id;
 }
+<<<<<<< HEAD
 
 class AndroidApk extends ApplicationPackage {
   AndroidApk({
@@ -656,3 +594,5 @@ class ApkManifestData {
   @override
   String toString() => _data.toString();
 }
+=======
+>>>>>>> 18116933e77adc82f80866c928266a5b4f1ed645

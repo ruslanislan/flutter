@@ -1,38 +1,9 @@
 # CIRRUS CONFIGURATION FILE
 # https://cirrus-ci.org/guide/writing-tasks/
 
-# YAML anchors used to share fields between tasks.
-# See https://confluence.atlassian.com/bitbucket/yaml-anchors-960154027.html
-
-windows_shard_template: &WINDOWS_SHARD_TEMPLATE
-  only_if: "changesInclude('.cirrus.yml', 'dev/**', 'bin/**') || $CIRRUS_PR == ''" # https://github.com/flutter/flutter/issues/41941
-  script:
-    - dart --enable-asserts ./dev/bots/test.dart
-
-macos_shard_template: &MACOS_SHARD_TEMPLATE
-  only_if: "changesInclude('.cirrus.yml', 'dev/**', 'bin/**') || $CIRRUS_PR == ''" # https://github.com/flutter/flutter/issues/41941
-  script:
-    - ulimit -S -n 2048 # https://github.com/flutter/flutter/issues/2976
-    - dart --enable-asserts ./dev/bots/test.dart
-
-firebase_shard_template: &FIREBASE_SHARD_TEMPLATE
-  environment:
-    # Empirically, this shard runs in 20-25 minutes with just one CPU and 4G of RAM, as of
-    # October 2019. It does not seem to be sensitive to the number of CPUs or amount of RAM;
-    # doubling CPUs had no effect (mere seconds under 20 minutes), increasing RAM to 24G left it
-    # on the high end of the 20-25 minute range. (This makes sense, as it's just driving the
-    # Firebase test lab remotely.) Less than 4G of RAM made it go OOM.
-    CLOUDSDK_CORE_DISABLE_PROMPTS: 1
-    GCLOUD_FIREBASE_TESTLAB_KEY: ENCRYPTED[1c140257edc48f5578fa5a0e5038b84c8e53270c405efa5a8e35ea303a4e0d135853989f448f72136206de854d17fbec]
-  script:
-    - dart --enable-asserts ./dev/bots/test.dart
-
-use_compute_credits: $CIRRUS_USER_COLLABORATOR == 'true'
-
 environment:
   # For details about environment variables used in Cirrus, including how encrypted variables work,
   # see https://cirrus-ci.org/guide/writing-tasks/#environment-variables
-  GCLOUD_SERVICE_ACCOUNT_KEY: ENCRYPTED[f12abe60f5045d619ef4c79b83dd1e0722a0b0b13dbea95fbe334e2db7fffbcd841a5a92da8824848b539a19afe0c9fb]
   # We change Flutter's directory to include a space in its name (see $CIRRUS_WORKING_DIR) so that
   # we constantly test path names with spaces in them. The FLUTTER_SDK_PATH_WITH_SPACE variable must
   # therefore have a space in it.
@@ -40,17 +11,18 @@ environment:
   # We force BOT to true so that all our tools know we're in a CI environment. This avoids any
   # dependency on precisely how Cirrus is detected by our tools.
   BOT: "true"
-  # Unsetting CIRRUS_CHANGE_MESSAGE and CIRRUS_COMMIT_MESSAGE as they might include non-ASCII
-  # characters which makes Gradle crash. See: https://github.com/flutter/flutter/issues/24935
-  # TODO(amirha): remove once we've migrated to newer Gradle
-  CIRRUS_CHANGE_MESSAGE: ""
-  CIRRUS_COMMIT_MESSAGE: ""
+
+gcp_credentials: ENCRYPTED[!48cff44dd32e9cc412d4d381c7fe68d373ca04cf2639f8192d21cb1a9ab5e21129651423a1cf88f3fd7fe2125c1cabd9!]
 
 # LINUX SHARDS
 task:
-  container:
-    # https://cirrus-ci.org/guide/docker-builder-vm/#dockerfile-as-a-ci-environment
+  gke_container:
     dockerfile: "dev/ci/docker_linux/Dockerfile"
+    builder_image_name: docker-builder # gce vm image
+    builder_image_project: flutter-cirrus
+    cluster_name: test-cluster
+    zone: us-central1-a
+    namespace: default
     cpu: $CPU
     memory: $MEMORY
     use_in_memory_disk: $USE_IN_MEMORY_DISK
@@ -111,7 +83,6 @@ task:
         # We use 3 CPUs because that's the minimum required to get framework_tests-widgets-linux
         # running fast enough that it is not the long pole, as of October 2019.
         CPU: 3
-        GOLD_SERVICE_ACCOUNT: ENCRYPTED[3afeea5ac7201151c3d0dc9648862f0462b5e4f55dc600ca8b692319622f7c3eda3d577b1b16cc2ef0311b7314c1c095]
       script:
         - dart --enable-asserts ./dev/bots/test.dart
 
@@ -122,7 +93,6 @@ task:
         # framework_tests-libraries-linux shard running fast enough that it is not the long pole, as
         # of October 2019.
         CPU: 3
-        GOLD_SERVICE_ACCOUNT: ENCRYPTED[3afeea5ac7201151c3d0dc9648862f0462b5e4f55dc600ca8b692319622f7c3eda3d577b1b16cc2ef0311b7314c1c095]
       script:
         - dart --enable-asserts ./dev/bots/test.dart
 
@@ -165,70 +135,22 @@ task:
         - (cd dev/bots; pub get)
         - dart --enable-asserts ./dev/bots/test.dart
 
-    - name: tool_tests-integration-linux
-      only_if: "changesInclude('.cirrus.yml', 'dev/**', 'packages/flutter_tools/**', 'bin/**') && $CIRRUS_PR != ''"
-      environment:
-        # As of October 2019, the tool_tests-integration-linux shard got faster with more CPUs up to
-        # 6 CPUs, and needed at least 8G of RAM to not run out of memory.
-        CPU: 6
-        MEMORY: 8G
-        CHROME_NO_SANDBOX: true
-        SHOULD_UPDATE_PACKAGES: "FALSE"
-      script:
-        - (cd packages/flutter_tools; pub get)
-        - (cd dev/bots; pub get)
-        - (cd dev/tools; pub get)
-        - dart --enable-asserts ./dev/bots/test.dart
-
-    - name: tool_coverage-linux # linux-only
-      skip: true # Skip while moving between Cirrus and LUCI
-      only_if: "$CIRRUS_BRANCH == 'master'"
-      environment:
-        # As of February 2020, the tool_coverage-linux shard needed at least 24G of RAM to run without
-        # getting OOM-killed, and even 8 CPUs took 25 minutes.
-        CPU: 8
-        MEMORY: 24G
-        CODECOV_TOKEN: ENCRYPTED[7c76a7f8c9264f3b7f3fd63fcf186f93c62c4dfe43ec288861c2f506d456681032b89efe7b7a139c82156350ca2c752c]
-        SHOULD_UPDATE_PACKAGES: "FALSE"
-      script:
-        - (cd packages/flutter_tools; pub get)
-        - (cd packages/flutter_tools/test/data/asset_test/main; pub get)
-        - (cd packages/flutter_tools/test/data/asset_test/font; pub get)
-        - (cd dev/bots; pub get)
-        - dart --enable-asserts ./dev/bots/test.dart
-        - bash <(curl -s https://codecov.io/bash) -c -f packages/flutter_tools/coverage/lcov.info -F flutter_tool
-
-    - name: web_integration_tests
-      only_if: "changesInclude('.cirrus.yml', 'dev/**', 'packages/flutter/**', 'packages/flutter_test/**', 'packages/flutter_tools/**', 'packages/flutter_web_plugins/**', 'bin/**') && $CIRRUS_PR != ''"
-      environment:
-        # As of October 2019, the Web shards needed more than 6G of RAM.
-        CPU: 2
-        MEMORY: 8G
-        CHROME_NO_SANDBOX: true
-        GOLD_SERVICE_ACCOUNT: ENCRYPTED[3afeea5ac7201151c3d0dc9648862f0462b5e4f55dc600ca8b692319622f7c3eda3d577b1b16cc2ef0311b7314c1c095]
-      script:
-        - dart --enable-asserts ./dev/bots/test.dart
-
     - name: docs-linux # linux-only
-      # TODO(fujino): Make this pre-submit only once #64212 is fixed
-      only_if: "changesInclude('.cirrus.yml', 'dev/**', 'packages/flutter/**', 'packages/flutter_test/**', 'packages/flutter_drive/**', 'packages/flutter_localizations/**', 'bin/**') || $CIRRUS_PR == ''"
       environment:
-        # TODO(tvolkert): optimize CPU and MEMORY settings once #60646 is resolved.
         CPU: 4
         MEMORY: 8G
-        # For uploading master docs to Firebase master branch staging site
-        FIREBASE_MASTER_TOKEN: ENCRYPTED[eb768d18798fdc5abfe09b224e1724c4d82831d715ccf90df2c79d618c317216cbd99493278361f6fe7948b409b603f0]
-        # For uploading stable docs to Firebase public live site
-        FIREBASE_PUBLIC_TOKEN: ENCRYPTED[37e8b82f167864cae9a3f4d2cf3f37dea331d9375c295327c45de524f6c588fa6f6d63e5784f10f6d43ce29689f36c92]
+      only_if: "$CIRRUS_PR != ''"
       script:
         - ./dev/bots/docs.sh
 
     - name: customer_testing-linux
       only_if: "$CIRRUS_PR != ''"
-      # environment:
+      environment:
         # Empirically, this shard runs fine at 1 CPU and 4G RAM as of October 2019. We will probably
         # want to grow this container when we invite people to add their tests in large numbers.
+        SHOULD_UPDATE_PACKAGES: "FALSE"
       script:
+<<<<<<< HEAD
         - rm -rf bin/cache/pkg/tests
         - git clone https://github.com/flutter/tests.git bin/cache/pkg/tests
         - (cd bin/cache/pkg/tests; git checkout f1c35d57db5f0c1dd31ae3e0f73a18891343cd60)
@@ -243,9 +165,17 @@ task:
 
     - name: firebase_test_lab_tests-2_last-linux
       <<: *FIREBASE_SHARD_TEMPLATE
+=======
+        # Cirrus doesn't give us the master branch, so we have to fetch it for ourselves,
+        # otherwise we won't be able to figure out how old or new our current branch is.
+        - git config user.email "cirrus-bot@invalid"
+        - git fetch origin master:master
+        # The actual logic is in a shell script so that it can be shared between CIs.
+        - (cd dev/customer_testing/; ./ci.sh)
+>>>>>>> 18116933e77adc82f80866c928266a5b4f1ed645
 
     - name: web_smoke_test
-      only_if: "changesInclude('.cirrus.yml', 'examples/hello_world/**' ,'dev/**', 'packages/flutter/**', 'packages/flutter_test/**', 'packages/flutter_tools/lib/src/test/**', 'packages/flutter_web_plugins/**', 'bin/**') || $CIRRUS_PR == ''"
+      only_if: "changesInclude('.cirrus.yml', 'examples/hello_world/**' ,'dev/**', 'packages/flutter/**', 'packages/flutter_test/**', 'packages/flutter_tools/lib/src/test/**', 'packages/flutter_web_plugins/**', 'bin/**') && $CIRRUS_PR != ''"
       environment:
         # Tests Hello World with Flutter Web Engine using Flutter Driver. Should not need more resources.
         CPU: 2
@@ -256,12 +186,12 @@ task:
         - git clone https://github.com/flutter/web_installers.git
         - cd web_installers/packages/web_drivers/
         - pub get
-        - dart lib/web_driver_installer.dart &
-        - sleep 20
+        - dart lib/web_driver_installer.dart chromedriver --install-only
         - chromedriver/chromedriver --port=4444 &
-        - sleep 5
+        - sleep 1
         - cd ../../../examples/hello_world/
         - flutter drive --target=test_driver/smoke_web_engine.dart -d web-server --profile --browser-name=chrome
+<<<<<<< HEAD
 
     - name: deploy_gallery-linux # linux- and macos- only
       # Do not add more tasks here. Nothing is currently deployed from master branch, so it is safe to run
@@ -518,3 +448,5 @@ task:
       script:
         - ulimit -S -n 2048 # https://github.com/flutter/flutter/issues/2976
         - dart --enable-asserts ./dev/bots/codesign.dart
+=======
+>>>>>>> 18116933e77adc82f80866c928266a5b4f1ed645

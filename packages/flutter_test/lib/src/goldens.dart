@@ -2,8 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// @dart = 2.10
-import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:path/path.dart' as path;
@@ -87,11 +85,7 @@ abstract class GoldenFileComparator {
       return key;
     final String keyString = key.toString();
     final String extension = path.extension(keyString);
-    return Uri.parse(
-      keyString
-        .split(extension)
-        .join() + '.' + version.toString() + extension
-    );
+    return Uri.parse('${keyString.split(extension).join()}.$version$extension');
   }
 
   /// Returns a [ComparisonResult] to describe the pixel differential of the
@@ -145,7 +139,7 @@ set goldenFileComparator(GoldenFileComparator value) {
 /// fake async constraints that are normally imposed on widget tests (i.e. the
 /// need or the ability to call [WidgetTester.pump] to advance the microtask
 /// queue). Prior to the invocation, the test framework will render only the
-/// [Element] to be compared on the screen.
+/// [widgets.Element] to be compared on the screen.
 ///
 /// See also:
 ///
@@ -198,11 +192,7 @@ abstract class WebGoldenComparator {
       return key;
     final String keyString = key.toString();
     final String extension = path.extension(keyString);
-    return Uri.parse(
-      keyString
-        .split(extension)
-        .join() + '.' + version.toString() + extension
-    );
+    return Uri.parse('${keyString.split(extension).join()}.$version$extension');
   }
 }
 
@@ -214,7 +204,7 @@ abstract class WebGoldenComparator {
 /// When using `flutter test --platform=chrome`, a comparator implemented by
 /// [DefaultWebGoldenComparator] is used if no other comparator is specified. It
 /// will send a request to the test server, which uses [goldenFileComparator]
-/// for golden file compatison.
+/// for golden file comparison.
 ///
 /// When using `flutter test --update-goldens`, the [DefaultWebGoldenComparator]
 /// updates the files on disk to match the rendering.
@@ -321,6 +311,7 @@ class ComparisonResult {
   /// Creates a new [ComparisonResult] for the current test.
   ComparisonResult({
     required this.passed,
+    required this.diffPercent,
     this.error,
     this.diffs,
   });
@@ -337,4 +328,7 @@ class ComparisonResult {
   /// values in the execution of the pixel test.
   // TODO(jonahwilliams): fix type signature when image is updated to support web.
   final Map<String, Object>? diffs;
+
+  /// The calculated percentage of pixel difference between two images.
+  final double diffPercent;
 }

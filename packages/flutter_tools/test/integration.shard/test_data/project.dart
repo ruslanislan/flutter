@@ -2,11 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import 'dart:async';
+// @dart = 2.8
 
 import 'package:file/file.dart';
 
 import '../test_utils.dart';
+import 'deferred_components_config.dart';
 
 const String _kDefaultHtml  = '''
 <html>
@@ -26,6 +27,7 @@ abstract class Project {
   String get main;
   String get test => null;
   String get generatedFile => null;
+  DeferredComponentsConfig get deferredComponents => null;
 
   Uri get mainDart => Uri.parse('package:test/main.dart');
 
@@ -40,6 +42,9 @@ abstract class Project {
     }
     if (generatedFile != null) {
       writeFile(fileSystem.path.join(dir.path, '.dart_tool', 'flutter_gen', 'flutter_gen.dart'), generatedFile);
+    }
+    if (deferredComponents != null) {
+      deferredComponents.setUpIn(dir);
     }
     writeFile(fileSystem.path.join(dir.path, 'web', 'index.html'), _kDefaultHtml);
     writePackages(dir.path);

@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import 'dart:async';
+// @dart = 2.8
 
 import 'package:file/file.dart';
 
@@ -38,7 +38,7 @@ void main() {
     expect(_flutter.hasExited, equals(false));
   });
 
-  testWithoutContext('fluter run does not terminate when a debugger is attached and pause-on-exceptions', () async {
+  testWithoutContext('flutter run does not terminate when a debugger is attached and pause-on-exceptions', () async {
     await _flutter.run(withDebugger: true, pauseOnExceptions: true);
     await Future<void>.delayed(requiredLifespan);
     expect(_flutter.hasExited, equals(false));

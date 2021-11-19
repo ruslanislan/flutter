@@ -2,34 +2,34 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import 'dart:async';
-
 import 'package:meta/meta.dart';
 import 'package:xml/xml.dart';
 import 'package:yaml/yaml.dart';
 
+import '../src/convert.dart';
 import 'android/gradle_utils.dart' as gradle;
-import 'artifacts.dart';
 import 'base/common.dart';
+import 'base/error_handling_io.dart';
 import 'base/file_system.dart';
 import 'base/logger.dart';
-import 'build_info.dart';
+import 'base/utils.dart';
 import 'bundle.dart' as bundle;
-import 'dart/pub.dart';
+import 'cmake_project.dart';
 import 'features.dart';
 import 'flutter_manifest.dart';
-import 'globals.dart' as globals;
-import 'ios/plist_parser.dart';
-import 'ios/xcodeproj.dart' as xcode;
-import 'ios/xcodeproj.dart';
+import 'flutter_plugins.dart';
+import 'globals_null_migrated.dart' as globals;
 import 'platform_plugins.dart';
-import 'plugins.dart';
 import 'template.dart';
+import 'xcode_project.dart';
+
+export 'cmake_project.dart';
+export 'xcode_project.dart';
 
 class FlutterProjectFactory {
   FlutterProjectFactory({
-    @required Logger logger,
-    @required FileSystem fileSystem,
+    required Logger logger,
+    required FileSystem fileSystem,
   }) : _logger = logger,
        _fileSystem = fileSystem;
 
@@ -86,9 +86,25 @@ class FlutterProject {
   /// if `pubspec.yaml` or `example/pubspec.yaml` is invalid.
   static FlutterProject current() => globals.projectFactory.fromDirectory(globals.fs.currentDirectory);
 
-  /// Returns a [FlutterProject] view of the given directory or a ToolExit error,
-  /// if `pubspec.yaml` or `example/pubspec.yaml` is invalid.
-  static FlutterProject fromPath(String path) => globals.projectFactory.fromDirectory(globals.fs.directory(path));
+  /// Create a [FlutterProject] and bypass the project caching.
+  @visibleForTesting
+  static FlutterProject fromDirectoryTest(Directory directory, [Logger? logger]) {
+    final FileSystem fileSystem = directory.fileSystem;
+    logger ??= BufferLogger.test();
+    final FlutterManifest manifest = FlutterProject._readManifest(
+      directory.childFile(bundle.defaultManifestPath).path,
+      logger: logger,
+      fileSystem: fileSystem,
+    );
+    final FlutterManifest exampleManifest = FlutterProject._readManifest(
+      FlutterProject._exampleDirectory(directory)
+        .childFile(bundle.defaultManifestPath)
+        .path,
+      logger: logger,
+      fileSystem: fileSystem,
+    );
+    return FlutterProject(directory, manifest, exampleManifest);
+  }
 
   /// The location of this project.
   final Directory directory;
@@ -103,27 +119,43 @@ class FlutterProject {
   /// part of iOS product bundle identifier, Android application ID, or
   /// Gradle group ID.
   Future<Set<String>> get organizationNames async {
-    final List<String> candidates = <String>[
+    final List<String> candidates = <String>[];
+
+    if (ios.existsSync()) {
       // Don't require iOS build info, this method is only
       // used during create as best-effort, use the
       // default target bundle identifier.
-      if (ios.existsSync())
-        await ios.productBundleIdentifier(null),
-      if (android.existsSync()) ...<String>[
-        android.applicationId,
-        android.group,
-      ],
-      if (example.android.existsSync())
-        example.android.applicationId,
-      if (example.ios.existsSync())
-        await example.ios.productBundleIdentifier(null),
-    ];
-    return Set<String>.of(candidates
-        .map<String>(_organizationNameFromPackageName)
-        .where((String name) => name != null));
+      final String? bundleIdentifier = await ios.productBundleIdentifier(null);
+      if (bundleIdentifier != null) {
+        candidates.add(bundleIdentifier);
+      }
+    }
+    if (android.existsSync()) {
+      final String? applicationId = android.applicationId;
+      final String? group = android.group;
+      candidates.addAll(<String>[
+        if (applicationId != null)
+          applicationId,
+        if (group != null)
+          group,
+      ]);
+    }
+    if (example.android.existsSync()) {
+      final String? applicationId = example.android.applicationId;
+      if (applicationId != null) {
+        candidates.add(applicationId);
+      }
+    }
+    if (example.ios.existsSync()) {
+      final String? bundleIdentifier = await example.ios.productBundleIdentifier(null);
+      if (bundleIdentifier != null) {
+        candidates.add(bundleIdentifier);
+      }
+    }
+    return Set<String>.of(candidates.map<String?>(_organizationNameFromPackageName).whereType<String>());
   }
 
-  String _organizationNameFromPackageName(String packageName) {
+  String? _organizationNameFromPackageName(String packageName) {
     if (packageName != null && 0 <= packageName.lastIndexOf('.')) {
       return packageName.substring(0, packageName.lastIndexOf('.'));
     }
@@ -131,31 +163,35 @@ class FlutterProject {
   }
 
   /// The iOS sub project of this project.
-  IosProject _ios;
+  IosProject? _ios;
   IosProject get ios => _ios ??= IosProject.fromFlutter(this);
 
   /// The Android sub project of this project.
-  AndroidProject _android;
+  AndroidProject? _android;
   AndroidProject get android => _android ??= AndroidProject._(this);
 
   /// The web sub project of this project.
-  WebProject _web;
+  WebProject? _web;
   WebProject get web => _web ??= WebProject._(this);
 
   /// The MacOS sub project of this project.
-  MacOSProject _macos;
-  MacOSProject get macos => _macos ??= MacOSProject._(this);
+  MacOSProject? _macos;
+  MacOSProject get macos => _macos ??= MacOSProject.fromFlutter(this);
 
   /// The Linux sub project of this project.
-  LinuxProject _linux;
-  LinuxProject get linux => _linux ??= LinuxProject._(this);
+  LinuxProject? _linux;
+  LinuxProject get linux => _linux ??= LinuxProject.fromFlutter(this);
 
   /// The Windows sub project of this project.
-  WindowsProject _windows;
-  WindowsProject get windows => _windows ??= WindowsProject._(this);
+  WindowsProject? _windows;
+  WindowsProject get windows => _windows ??= WindowsProject.fromFlutter(this);
+
+  /// The Windows UWP sub project of this project.
+  WindowsUwpProject? _windowUwp;
+  WindowsUwpProject get windowsUwp => _windowUwp ??= WindowsUwpProject.fromFlutter(this);
 
   /// The Fuchsia sub project of this project.
-  FuchsiaProject _fuchsia;
+  FuchsiaProject? _fuchsia;
   FuchsiaProject get fuchsia => _fuchsia ??= FuchsiaProject._(this);
 
   /// The `pubspec.yaml` file of this project.
@@ -163,6 +199,12 @@ class FlutterProject {
 
   /// The `.packages` file of this project.
   File get packagesFile => directory.childFile('.packages');
+
+  /// The `package_config.json` file of the project.
+  ///
+  /// This is the replacement for .packages which contains language
+  /// version information.
+  File get packageConfigFile => directory.childDirectory('.dart_tool').childFile('package_config.json');
 
   /// The `.metadata` file of this project.
   File get metadataFile => directory.childFile('.metadata');
@@ -195,6 +237,9 @@ class FlutterProject {
   /// True if this project is a Flutter module project.
   bool get isModule => manifest.isModule;
 
+  /// True if this project is a Flutter plugin project.
+  bool get isPlugin => manifest.isPlugin;
+
   /// True if the Flutter project is using the AndroidX support library.
   bool get usesAndroidX => manifest.usesAndroidX;
 
@@ -210,10 +255,10 @@ class FlutterProject {
   /// Completes with an empty [FlutterManifest], if the file does not exist.
   /// Completes with a ToolExit on validation error.
   static FlutterManifest _readManifest(String path, {
-    @required Logger logger,
-    @required FileSystem fileSystem,
+    required Logger logger,
+    required FileSystem fileSystem,
   }) {
-    FlutterManifest manifest;
+    FlutterManifest? manifest;
     try {
       manifest = FlutterManifest.createFromPath(
         path,
@@ -223,6 +268,12 @@ class FlutterProject {
     } on YamlException catch (e) {
       logger.printStatus('Error detected in pubspec.yaml:', emphasis: true);
       logger.printError('$e');
+    } on FormatException catch (e) {
+      logger.printError('Error detected while parsing pubspec.yaml:', emphasis: true);
+      logger.printError('$e');
+    } on FileSystemException catch (e) {
+      logger.printError('Error detected while reading pubspec.yaml:', emphasis: true);
+      logger.printError('$e');
     }
     if (manifest == null) {
       throwToolExit('Please correct the pubspec.yaml file at $path');
@@ -230,38 +281,84 @@ class FlutterProject {
     return manifest;
   }
 
-  /// Generates project files necessary to make Gradle builds work on Android
-  /// and CocoaPods+Xcode work on iOS, for app and module projects only.
-  // TODO(cyanglaz): The param `checkProjects` is confusing. We should give it a better name
-  // or add some documentation explaining what it does, or both.
-  // https://github.com/flutter/flutter/issues/60023
-  Future<void> ensureReadyForPlatformSpecificTooling({bool checkProjects = false}) async {
-    if (!directory.existsSync() || hasExampleApp) {
+  /// Reapplies template files and regenerates project files and plugin
+  /// registrants for app and module projects only.
+  ///
+  /// Will not create project platform directories if they do not already exist.
+  Future<void> regeneratePlatformSpecificTooling() async {
+    return ensureReadyForPlatformSpecificTooling(
+      androidPlatform: android.existsSync(),
+      iosPlatform: ios.existsSync(),
+      // TODO(stuartmorgan): Revisit the conditions here once the plans for handling
+      // desktop in existing projects are in place.
+      linuxPlatform: featureFlags.isLinuxEnabled && linux.existsSync(),
+      macOSPlatform: featureFlags.isMacOSEnabled && macos.existsSync(),
+      windowsPlatform: featureFlags.isWindowsEnabled && windows.existsSync(),
+      webPlatform: featureFlags.isWebEnabled && web.existsSync(),
+      winUwpPlatform: featureFlags.isWindowsUwpEnabled && windowsUwp.existsSync(),
+    );
+  }
+
+  /// Applies template files and generates project files and plugin
+  /// registrants for app and module projects only for the specified platforms.
+  Future<void> ensureReadyForPlatformSpecificTooling({
+    bool androidPlatform = false,
+    bool iosPlatform = false,
+    bool linuxPlatform = false,
+    bool macOSPlatform = false,
+    bool windowsPlatform = false,
+    bool webPlatform = false,
+    bool winUwpPlatform = false,
+  }) async {
+    if (!directory.existsSync() || hasExampleApp || isPlugin) {
       return;
     }
-    await refreshPluginsList(this);
-    if ((android.existsSync() && checkProjects) || !checkProjects) {
+    await refreshPluginsList(this, iosPlatform: iosPlatform, macOSPlatform: macOSPlatform);
+    if (androidPlatform) {
       await android.ensureReadyForPlatformSpecificTooling();
     }
-    if ((ios.existsSync() && checkProjects) || !checkProjects) {
+    if (iosPlatform) {
       await ios.ensureReadyForPlatformSpecificTooling();
     }
-    // TODO(stuartmorgan): Revisit conditions once there is a plan for handling
-    // non-default platform projects. For now, always treat checkProjects as
-    // true for desktop.
-    if (featureFlags.isLinuxEnabled && linux.existsSync()) {
+    if (linuxPlatform) {
       await linux.ensureReadyForPlatformSpecificTooling();
     }
-    if (featureFlags.isMacOSEnabled && macos.existsSync()) {
+    if (macOSPlatform) {
       await macos.ensureReadyForPlatformSpecificTooling();
     }
-    if (featureFlags.isWindowsEnabled && windows.existsSync()) {
+    if (windowsPlatform) {
       await windows.ensureReadyForPlatformSpecificTooling();
     }
-    if (featureFlags.isWebEnabled && web.existsSync()) {
+    if (webPlatform) {
       await web.ensureReadyForPlatformSpecificTooling();
     }
-    await injectPlugins(this, checkProjects: checkProjects);
+    if (winUwpPlatform) {
+      await windowsUwp.ensureReadyForPlatformSpecificTooling();
+    }
+    await injectPlugins(
+      this,
+      androidPlatform: androidPlatform,
+      iosPlatform: iosPlatform,
+      linuxPlatform: linuxPlatform,
+      macOSPlatform: macOSPlatform,
+      windowsPlatform: windowsPlatform,
+      webPlatform: webPlatform,
+      winUwpPlatform: winUwpPlatform,
+    );
+  }
+
+  /// Returns a json encoded string containing the [appName], [version], and [buildNumber] that is used to generate version.json
+  String getVersionInfo()  {
+    final String? buildName = manifest.buildName;
+    final String? buildNumber = manifest.buildNumber;
+    final Map<String, String> versionFileJson = <String, String>{
+      'app_name': manifest.appName,
+      if (buildName != null)
+        'version': buildName,
+      if (buildNumber != null)
+        'build_number': buildNumber,
+    };
+    return jsonEncode(versionFileJson);
   }
 }
 
@@ -275,6 +372,7 @@ abstract class FlutterProjectPlatform {
   bool existsSync();
 }
 
+<<<<<<< HEAD
 /// Represents an Xcode-based sub-project.
 ///
 /// This defines interfaces common to iOS and macOS projects.
@@ -687,6 +785,8 @@ class IosProject extends FlutterProjectPlatform implements XcodeBasedProject {
   }
 }
 
+=======
+>>>>>>> 18116933e77adc82f80866c928266a5b4f1ed645
 /// Represents the Android sub-project of a Flutter project.
 ///
 /// Instances will reflect the contents of the `android/` sub-folder of
@@ -728,10 +828,35 @@ class AndroidProject extends FlutterProjectPlatform {
   /// True if the Flutter project is using the AndroidX support library.
   bool get usesAndroidX => parent.usesAndroidX;
 
+  /// Returns true if the current version of the Gradle plugin is supported.
+  bool get isSupportedVersion => _isSupportedVersion ??= _computeSupportedVersion();
+  bool? _isSupportedVersion;
+
+  bool _computeSupportedVersion() {
+    final FileSystem fileSystem = hostAppGradleRoot.fileSystem;
+    final File plugin = hostAppGradleRoot.childFile(
+        fileSystem.path.join('buildSrc', 'src', 'main', 'groovy', 'FlutterPlugin.groovy'));
+    if (plugin.existsSync()) {
+      return false;
+    }
+    final File appGradle = hostAppGradleRoot.childFile(
+        fileSystem.path.join('app', 'build.gradle'));
+    if (!appGradle.existsSync()) {
+      return false;
+    }
+    for (final String line in appGradle.readAsLinesSync()) {
+      if (line.contains(RegExp(r'apply from: .*/flutter.gradle')) ||
+          line.contains("def flutterPluginVersion = 'managed'")) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   /// True, if the app project is using Kotlin.
   bool get isKotlin {
     final File gradleFile = hostAppGradleRoot.childDirectory('app').childFile('build.gradle');
-    return _firstMatchInFile(gradleFile, _kotlinPluginPattern) != null;
+    return firstMatchInFile(gradleFile, _kotlinPluginPattern) != null;
   }
 
   File get appManifestFile {
@@ -756,14 +881,14 @@ class AndroidProject extends FlutterProjectPlatform {
     return hostAppGradleRoot.childFile('build.gradle').existsSync();
   }
 
-  String get applicationId {
+  String? get applicationId {
     final File gradleFile = hostAppGradleRoot.childDirectory('app').childFile('build.gradle');
-    return _firstMatchInFile(gradleFile, _applicationIdPattern)?.group(1);
+    return firstMatchInFile(gradleFile, _applicationIdPattern)?.group(1);
   }
 
-  String get group {
+  String? get group {
     final File gradleFile = hostAppGradleRoot.childFile('build.gradle');
-    return _firstMatchInFile(gradleFile, _groupPattern)?.group(1);
+    return firstMatchInFile(gradleFile, _groupPattern)?.group(1);
   }
 
   /// The build directory where the Android artifacts are placed.
@@ -815,14 +940,14 @@ to migrate your project.
   Directory get pluginRegistrantHost => _flutterLibGradleRoot.childDirectory(isModule ? 'Flutter' : 'app');
 
   Future<void> _regenerateLibrary() async {
-    _deleteIfExistsSync(ephemeralDirectory);
+    ErrorHandlingFileSystem.deleteIfExists(ephemeralDirectory, recursive: true);
     await _overwriteFromTemplate(globals.fs.path.join(
       'module',
       'android',
       'library_new_embedding',
     ), ephemeralDirectory);
     await _overwriteFromTemplate(globals.fs.path.join('module', 'android', 'gradle'), ephemeralDirectory);
-    gradle.gradleUtils.injectGradleWrapperIfNeeded(ephemeralDirectory);
+    globals.gradleUtils?.injectGradleWrapperIfNeeded(ephemeralDirectory);
   }
 
   Future<void> _overwriteFromTemplate(String path, Directory target) async {
@@ -832,14 +957,14 @@ to migrate your project.
       templateManifest: null,
       logger: globals.logger,
       templateRenderer: globals.templateRenderer,
-      pub: pub,
     );
+    final String androidIdentifier = parent.manifest.androidPackage ?? 'com.example.${parent.manifest.appName}';
     template.render(
       target,
-      <String, dynamic>{
+      <String, Object>{
         'android': true,
         'projectName': parent.manifest.appName,
-        'androidIdentifier': parent.manifest.androidPackage,
+        'androidIdentifier': androidIdentifier,
         'androidX': usesAndroidX,
       },
       printStatusWhenWriting: false,
@@ -867,9 +992,9 @@ to migrate your project.
                     'Please ensure that you have read permission to this file and try again.');
     }
     for (final XmlElement metaData in document.findAllElements('meta-data')) {
-      final String name = metaData.getAttribute('android:name');
+      final String? name = metaData.getAttribute('android:name');
       if (name == 'flutterEmbedding') {
-        final String embeddingVersionString = metaData.getAttribute('android:value');
+        final String? embeddingVersionString = metaData.getAttribute('android:value');
         if (embeddingVersionString == '1') {
           return AndroidEmbeddingVersion.v1;
         }
@@ -920,214 +1045,19 @@ class WebProject extends FlutterProjectPlatform {
   Future<void> ensureReadyForPlatformSpecificTooling() async {}
 }
 
-/// Deletes [directory] with all content.
-void _deleteIfExistsSync(Directory directory) {
-  if (directory.existsSync()) {
-    directory.deleteSync(recursive: true);
-  }
-}
-
-
-/// Returns the first line-based match for [regExp] in [file].
-///
-/// Assumes UTF8 encoding.
-Match _firstMatchInFile(File file, RegExp regExp) {
-  if (!file.existsSync()) {
-    return null;
-  }
-  for (final String line in file.readAsLinesSync()) {
-    final Match match = regExp.firstMatch(line);
-    if (match != null) {
-      return match;
-    }
-  }
-  return null;
-}
-
-/// The macOS sub project.
-class MacOSProject extends FlutterProjectPlatform implements XcodeBasedProject {
-  MacOSProject._(this.parent);
-
-  @override
-  final FlutterProject parent;
-
-  @override
-  String get pluginConfigKey => MacOSPlugin.kConfigKey;
-
-  static const String _hostAppProjectName = 'Runner';
-
-  @override
-  bool existsSync() => _macOSDirectory.existsSync();
-
-  Directory get _macOSDirectory => parent.directory.childDirectory('macos');
-
-  /// The directory in the project that is managed by Flutter. As much as
-  /// possible, files that are edited by Flutter tooling after initial project
-  /// creation should live here.
-  Directory get managedDirectory => _macOSDirectory.childDirectory('Flutter');
-
-  /// The subdirectory of [managedDirectory] that contains files that are
-  /// generated on the fly. All generated files that are not intended to be
-  /// checked in should live here.
-  Directory get ephemeralDirectory => managedDirectory.childDirectory('ephemeral');
-
-  /// The xcfilelist used to track the inputs for the Flutter script phase in
-  /// the Xcode build.
-  File get inputFileList => ephemeralDirectory.childFile('FlutterInputs.xcfilelist');
-
-  /// The xcfilelist used to track the outputs for the Flutter script phase in
-  /// the Xcode build.
-  File get outputFileList => ephemeralDirectory.childFile('FlutterOutputs.xcfilelist');
-
-  @override
-  File get generatedXcodePropertiesFile => ephemeralDirectory.childFile('Flutter-Generated.xcconfig');
-
-  @override
-  File xcodeConfigFor(String mode) => managedDirectory.childFile('Flutter-$mode.xcconfig');
-
-  @override
-  File get generatedEnvironmentVariableExportScript => ephemeralDirectory.childFile('flutter_export_environment.sh');
-
-  @override
-  File get podfile => _macOSDirectory.childFile('Podfile');
-
-  @override
-  File get podfileLock => _macOSDirectory.childFile('Podfile.lock');
-
-  @override
-  File get podManifestLock => _macOSDirectory.childDirectory('Pods').childFile('Manifest.lock');
-
-  @override
-  Directory get xcodeProject => _macOSDirectory.childDirectory('$_hostAppProjectName.xcodeproj');
-
-  @override
-  File get xcodeProjectInfoFile => xcodeProject.childFile('project.pbxproj');
-
-  @override
-  Directory get xcodeWorkspace => _macOSDirectory.childDirectory('$_hostAppProjectName.xcworkspace');
-
-  /// The file where the Xcode build will write the name of the built app.
-  ///
-  /// Ideally this will be replaced in the future with inspection of the Runner
-  /// scheme's target.
-  File get nameFile => ephemeralDirectory.childFile('.app_filename');
-
-  Future<void> ensureReadyForPlatformSpecificTooling() async {
-    // TODO(stuartmorgan): Add create-from-template logic here.
-    await _updateGeneratedXcodeConfigIfNeeded();
-  }
-
-  Future<void> _updateGeneratedXcodeConfigIfNeeded() async {
-    if (globals.cache.isOlderThanToolsStamp(generatedXcodePropertiesFile)) {
-      await xcode.updateGeneratedXcodeProperties(
-        project: parent,
-        buildInfo: BuildInfo.debug,
-        useMacOSConfig: true,
-        setSymroot: false,
-      );
-    }
-  }
-}
-
-/// The Windows sub project.
-class WindowsProject extends FlutterProjectPlatform implements CmakeBasedProject {
-  WindowsProject._(this.parent);
-
-  @override
-  final FlutterProject parent;
-
-  @override
-  String get pluginConfigKey => WindowsPlugin.kConfigKey;
-
-  @override
-  bool existsSync() => _editableDirectory.existsSync() && cmakeFile.existsSync();
-
-  @override
-  File get cmakeFile => _editableDirectory.childFile('CMakeLists.txt');
-
-  @override
-  File get generatedCmakeConfigFile => ephemeralDirectory.childFile('generated_config.cmake');
-
-  @override
-  File get generatedPluginCmakeFile => managedDirectory.childFile('generated_plugins.cmake');
-
-  @override
-  Directory get pluginSymlinkDirectory => ephemeralDirectory.childDirectory('.plugin_symlinks');
-
-  Directory get _editableDirectory => parent.directory.childDirectory('windows');
-
-  /// The directory in the project that is managed by Flutter. As much as
-  /// possible, files that are edited by Flutter tooling after initial project
-  /// creation should live here.
-  Directory get managedDirectory => _editableDirectory.childDirectory('flutter');
-
-  /// The subdirectory of [managedDirectory] that contains files that are
-  /// generated on the fly. All generated files that are not intended to be
-  /// checked in should live here.
-  Directory get ephemeralDirectory => managedDirectory.childDirectory('ephemeral');
-
-  Future<void> ensureReadyForPlatformSpecificTooling() async {}
-}
-
-/// The Linux sub project.
-class LinuxProject extends FlutterProjectPlatform implements CmakeBasedProject {
-  LinuxProject._(this.parent);
-
-  @override
-  final FlutterProject parent;
-
-  @override
-  String get pluginConfigKey => LinuxPlugin.kConfigKey;
-
-  static final RegExp _applicationIdPattern = RegExp(r'''^\s*set\s*\(\s*APPLICATION_ID\s*"(.*)"\s*\)\s*$''');
-
-  Directory get _editableDirectory => parent.directory.childDirectory('linux');
-
-  /// The directory in the project that is managed by Flutter. As much as
-  /// possible, files that are edited by Flutter tooling after initial project
-  /// creation should live here.
-  Directory get managedDirectory => _editableDirectory.childDirectory('flutter');
-
-  /// The subdirectory of [managedDirectory] that contains files that are
-  /// generated on the fly. All generated files that are not intended to be
-  /// checked in should live here.
-  Directory get ephemeralDirectory => managedDirectory.childDirectory('ephemeral');
-
-  @override
-  bool existsSync() => _editableDirectory.existsSync();
-
-  @override
-  File get cmakeFile => _editableDirectory.childFile('CMakeLists.txt');
-
-  @override
-  File get generatedCmakeConfigFile => ephemeralDirectory.childFile('generated_config.cmake');
-
-  @override
-  File get generatedPluginCmakeFile => managedDirectory.childFile('generated_plugins.cmake');
-
-  @override
-  Directory get pluginSymlinkDirectory => ephemeralDirectory.childDirectory('.plugin_symlinks');
-
-  Future<void> ensureReadyForPlatformSpecificTooling() async {}
-
-  String get applicationId {
-    return _firstMatchInFile(cmakeFile, _applicationIdPattern)?.group(1);
-  }
-}
-
 /// The Fuchsia sub project.
 class FuchsiaProject {
   FuchsiaProject._(this.project);
 
   final FlutterProject project;
 
-  Directory _editableHostAppDirectory;
+  Directory? _editableHostAppDirectory;
   Directory get editableHostAppDirectory =>
       _editableHostAppDirectory ??= project.directory.childDirectory('fuchsia');
 
   bool existsSync() => editableHostAppDirectory.existsSync();
 
-  Directory _meta;
+  Directory? _meta;
   Directory get meta =>
       _meta ??= editableHostAppDirectory.childDirectory('meta');
 }

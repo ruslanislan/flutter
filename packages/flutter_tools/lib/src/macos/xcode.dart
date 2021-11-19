@@ -4,11 +4,10 @@
 
 import 'dart:async';
 
+import 'package:file/memory.dart';
 import 'package:meta/meta.dart';
 import 'package:process/process.dart';
-import 'package:vm_service/vm_service_io.dart' as vm_service_io;
 
-import '../artifacts.dart';
 import '../base/common.dart';
 import '../base/file_system.dart';
 import '../base/io.dart';
@@ -16,26 +15,15 @@ import '../base/logger.dart';
 import '../base/os.dart';
 import '../base/platform.dart';
 import '../base/process.dart';
+import '../base/version.dart';
 import '../build_info.dart';
-import '../cache.dart';
-import '../convert.dart';
-import '../globals.dart' as globals;
-import '../ios/devices.dart';
-import '../ios/ios_deploy.dart';
-import '../ios/iproxy.dart';
-import '../ios/mac.dart';
 import '../ios/xcodeproj.dart';
-import '../reporting/reporting.dart';
 
-const int kXcodeRequiredVersionMajor = 11;
-const int kXcodeRequiredVersionMinor = 0;
-const int kXcodeRequiredVersionPatch = 0;
+Version get xcodeRequiredVersion => Version(12, 0, 1, text: '12.0.1');
 
-enum SdkType {
-  iPhone,
-  iPhoneSimulator,
-  macOS,
-}
+/// Diverging this number from the minimum required version will provide a doctor
+/// warning, not error, that users should upgrade Xcode.
+Version get xcodeRecommendedVersion => xcodeRequiredVersion;
 
 /// SDK name passed to `xcrun --sdk`. Corresponds to undocumented Xcode
 /// SUPPORTED_PLATFORMS values.
@@ -43,22 +31,16 @@ enum SdkType {
 /// Usage: xcrun [options] <tool name> ... arguments ...
 /// ...
 /// --sdk <sdk name>            find the tool for the given SDK name.
-String getNameForSdk(SdkType sdk) {
-  switch (sdk) {
-    case SdkType.iPhone:
-      return 'iphoneos';
-    case SdkType.iPhoneSimulator:
-      return 'iphonesimulator';
-    case SdkType.macOS:
-      return 'macosx';
-  }
-  assert(false);
-  return null;
+String getSDKNameForIOSEnvironmentType(EnvironmentType environmentType) {
+  return (environmentType == EnvironmentType.simulator)
+      ? 'iphonesimulator'
+      : 'iphoneos';
 }
 
 /// A utility class for interacting with Xcode command line tools.
 class Xcode {
   Xcode({
+<<<<<<< HEAD
     @required Platform platform,
     @required ProcessManager processManager,
     @required Logger logger,
@@ -75,6 +57,42 @@ class Xcode {
         ),
         _processUtils =
             ProcessUtils(logger: logger, processManager: processManager);
+=======
+    required Platform platform,
+    required ProcessManager processManager,
+    required Logger logger,
+    required FileSystem fileSystem,
+    required XcodeProjectInterpreter xcodeProjectInterpreter,
+  })  : _platform = platform,
+        _fileSystem = fileSystem,
+        _xcodeProjectInterpreter = xcodeProjectInterpreter,
+        _processUtils =
+            ProcessUtils(logger: logger, processManager: processManager);
+
+  /// Create an [Xcode] for testing.
+  ///
+  /// Defaults to a memory file system, fake platform,
+  /// buffer logger, and test [XcodeProjectInterpreter].
+  @visibleForTesting
+  factory Xcode.test({
+    required ProcessManager processManager,
+    XcodeProjectInterpreter? xcodeProjectInterpreter,
+    Platform? platform,
+    FileSystem? fileSystem,
+  }) {
+    platform ??= FakePlatform(
+      operatingSystem: 'macos',
+      environment: <String, String>{},
+    );
+    return Xcode(
+      platform: platform,
+      processManager: processManager,
+      fileSystem: fileSystem ?? MemoryFileSystem.test(),
+      logger: BufferLogger.test(),
+      xcodeProjectInterpreter: xcodeProjectInterpreter ?? XcodeProjectInterpreter.test(processManager: processManager),
+    );
+  }
+>>>>>>> 18116933e77adc82f80866c928266a5b4f1ed645
 
   final Platform _platform;
   final ProcessUtils _processUtils;
@@ -82,10 +100,10 @@ class Xcode {
   final FileSystem _fileSystem;
   final XcodeProjectInterpreter _xcodeProjectInterpreter;
 
-  bool get isInstalledAndMeetsVersionCheck => _platform.isMacOS && isInstalled && isVersionSatisfactory;
+  bool get isInstalledAndMeetsVersionCheck => _platform.isMacOS && isInstalled && isRequiredVersionSatisfactory;
 
-  String _xcodeSelectPath;
-  String get xcodeSelectPath {
+  String? _xcodeSelectPath;
+  String? get xcodeSelectPath {
     if (_xcodeSelectPath == null) {
       try {
         _xcodeSelectPath = _processUtils.runSync(
@@ -100,20 +118,13 @@ class Xcode {
     return _xcodeSelectPath;
   }
 
-  bool get isInstalled {
-    if (xcodeSelectPath == null || xcodeSelectPath.isEmpty) {
-      return false;
-    }
-    return _xcodeProjectInterpreter.isInstalled;
-  }
+  bool get isInstalled => _xcodeProjectInterpreter.isInstalled;
 
-  int get majorVersion => _xcodeProjectInterpreter.majorVersion;
-  int get minorVersion => _xcodeProjectInterpreter.minorVersion;
-  int get patchVersion => _xcodeProjectInterpreter.patchVersion;
+  Version? get currentVersion => _xcodeProjectInterpreter.version;
 
-  String get versionText => _xcodeProjectInterpreter.versionText;
+  String? get versionText => _xcodeProjectInterpreter.versionText;
 
-  bool _eulaSigned;
+  bool? _eulaSigned;
   /// Has the EULA been signed?
   bool get eulaSigned {
     if (_eulaSigned == null) {
@@ -132,10 +143,10 @@ class Xcode {
         _eulaSigned = false;
       }
     }
-    return _eulaSigned;
+    return _eulaSigned ?? false;
   }
 
-  bool _isSimctlInstalled;
+  bool? _isSimctlInstalled;
 
   /// Verifies that simctl is installed by trying to run it.
   bool get isSimctlInstalled {
@@ -146,30 +157,31 @@ class Xcode {
         final RunResult result = _processUtils.runSync(
           <String>[...xcrunCommand(), 'simctl', 'list'],
         );
-        _isSimctlInstalled = result.stderr == null || result.stderr == '';
+        _isSimctlInstalled = result.exitCode == 0;
       } on ProcessException {
         _isSimctlInstalled = false;
       }
     }
-    return _isSimctlInstalled;
+    return _isSimctlInstalled ?? false;
   }
 
-  bool get isVersionSatisfactory {
-    if (!_xcodeProjectInterpreter.isInstalled) {
+  bool get isRequiredVersionSatisfactory {
+    final Version? version = currentVersion;
+    if (version == null) {
       return false;
     }
-    if (majorVersion > kXcodeRequiredVersionMajor) {
-      return true;
-    }
-    if (majorVersion == kXcodeRequiredVersionMajor) {
-      if (minorVersion == kXcodeRequiredVersionMinor) {
-        return patchVersion >= kXcodeRequiredVersionPatch;
-      }
-      return minorVersion >= kXcodeRequiredVersionMinor;
-    }
-    return false;
+    return version >= xcodeRequiredVersion;
   }
 
+  bool get isRecommendedVersionSatisfactory {
+    final Version? version = currentVersion;
+    if (version == null) {
+      return false;
+    }
+    return version >= xcodeRecommendedVersion;
+  }
+
+<<<<<<< HEAD
   /// The `xcrun` Xcode command to run or locate development
   /// tools and properties.
   ///
@@ -188,6 +200,10 @@ class Xcode {
     xcrunCommand.add('xcrun');
     return xcrunCommand;
   }
+=======
+  /// See [XcodeProjectInterpreter.xcrunCommand].
+  List<String> xcrunCommand() => _xcodeProjectInterpreter.xcrunCommand();
+>>>>>>> 18116933e77adc82f80866c928266a5b4f1ed645
 
   Future<RunResult> cc(List<String> args) {
     return _processUtils.run(
@@ -203,10 +219,14 @@ class Xcode {
     );
   }
 
-  Future<String> sdkLocation(SdkType sdk) async {
-    assert(sdk != null);
+  Future<String> sdkLocation(EnvironmentType environmentType) async {
+    assert(environmentType != null);
     final RunResult runResult = await _processUtils.run(
+<<<<<<< HEAD
       <String>[...xcrunCommand(), '--sdk', getNameForSdk(sdk), '--show-sdk-path'],
+=======
+      <String>[...xcrunCommand(), '--sdk', getSDKNameForIOSEnvironmentType(environmentType), '--show-sdk-path'],
+>>>>>>> 18116933e77adc82f80866c928266a5b4f1ed645
     );
     if (runResult.exitCode != 0) {
       throwToolExit('Could not find SDK location: ${runResult.stderr}');
@@ -214,20 +234,17 @@ class Xcode {
     return runResult.stdout.trim();
   }
 
-  String getSimulatorPath() {
-    if (xcodeSelectPath == null) {
+  String? getSimulatorPath() {
+    final String? selectPath = xcodeSelectPath;
+    if (selectPath == null) {
       return null;
     }
-    final List<String> searchPaths = <String>[
-      _fileSystem.path.join(xcodeSelectPath, 'Applications', 'Simulator.app'),
-    ];
-    return searchPaths.where((String p) => p != null).firstWhere(
-      (String p) => _fileSystem.directory(p).existsSync(),
-      orElse: () => null,
-    );
+    final String appPath = _fileSystem.path.join(selectPath, 'Applications', 'Simulator.app');
+    return _fileSystem.directory(appPath).existsSync() ? appPath : null;
   }
 }
 
+<<<<<<< HEAD
 enum XCDeviceEvent {
   attach,
   detach,
@@ -702,5 +719,15 @@ class XCDevice {
       }
     }
     return diagnostics;
+=======
+EnvironmentType? environmentTypeFromSdkroot(String sdkroot, FileSystem fileSystem) {
+  assert(sdkroot != null);
+  // iPhoneSimulator.sdk or iPhoneOS.sdk
+  final String sdkName = fileSystem.path.basename(sdkroot).toLowerCase();
+  if (sdkName.contains('iphone')) {
+    return sdkName.contains('simulator') ? EnvironmentType.simulator : EnvironmentType.physical;
+>>>>>>> 18116933e77adc82f80866c928266a5b4f1ed645
   }
+  assert(false);
+  return null;
 }

@@ -2,7 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import 'dart:async';
 import 'dart:io';
 
 import 'package:path/path.dart' as path;
@@ -30,7 +29,7 @@ void main() {
     Future<void> expectScriptResult(
         List<String> testNames,
         int expectedExitCode,
-        {String deviceId}
+        {String? deviceId}
       ) async {
       final ProcessResult result = await runScript(testNames, <String>[
         if (deviceId != null) ...<String>['-d', deviceId],
@@ -138,6 +137,15 @@ void main() {
           'metric2\t123.00 (0.00%)\t123.00 (0.00%)\t1.00x\t\n',
         ),
       );
+    });
+
+    test('fails to upload results to Cocoon if flags given', () async {
+      // CocoonClient will fail to find test-file, and will not send any http requests.
+      final ProcessResult result = await runScript(
+        <String>['smoke_test_success'],
+        <String>['--service-account-file=test-file', '--task-key=task123'],
+      );
+      expect(result.exitCode, 1);
     });
   });
 }

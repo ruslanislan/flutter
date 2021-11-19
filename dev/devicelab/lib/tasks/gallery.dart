@@ -2,13 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 
-import '../framework/adb.dart';
+import '../framework/devices.dart';
 import '../framework/framework.dart';
+import '../framework/task_result.dart';
 import '../framework/utils.dart';
 
 TaskFunction createGalleryTransitionTest({bool semanticsEnabled = false}) {
@@ -53,29 +53,50 @@ class GalleryTransitionTest {
   final bool needFullTimeline;
   final String testFile;
   final String timelineSummaryFile;
-  final String timelineTraceFile;
-  final String transitionDurationFile;
-  final String driverFile;
+  final String? timelineTraceFile;
+  final String? transitionDurationFile;
+  final String? driverFile;
 
   Future<TaskResult> call() async {
     final Device device = await devices.workingDevice;
     await device.unlock();
     final String deviceId = device.deviceId;
-    final Directory galleryDirectory =
-        dir('${flutterDirectory.path}/dev/integration_tests/flutter_gallery');
+    final Directory galleryDirectory = dir('${flutterDirectory.path}/dev/integration_tests/flutter_gallery');
     await inDirectory<void>(galleryDirectory, () async {
-      await flutter('packages', options: <String>['get']);
+      String? applicationBinaryPath;
+      if (deviceOperatingSystem == DeviceOperatingSystem.android) {
+        section('BUILDING APPLICATION');
+        await flutter(
+          'build',
+          options: <String>[
+            'apk',
+            '--no-android-gradle-daemon',
+            '--profile',
+            '-t',
+            'test_driver/$testFile.dart',
+            '--target-platform',
+            'android-arm,android-arm64',
+          ],
+        );
+        applicationBinaryPath = 'build/app/outputs/flutter-apk/app-profile.apk';
+      }
 
       final String testDriver = driverFile ?? (semanticsEnabled
           ? '${testFile}_with_semantics_test'
           : '${testFile}_test');
-
+      section('DRIVE START');
       await flutter('drive', options: <String>[
+        '--no-dds',
         '--profile',
         if (needFullTimeline)
           '--trace-startup',
-        '-t',
-        'test_driver/$testFile.dart',
+        if (applicationBinaryPath != null)
+          '--use-application-binary=$applicationBinaryPath'
+        else
+          ...<String>[
+            '-t',
+            'test_driver/$testFile.dart',
+          ],
         '--driver',
         'test_driver/$testDriver.dart',
         '-d',
@@ -83,13 +104,14 @@ class GalleryTransitionTest {
       ]);
     });
 
+    final String testOutputDirectory = Platform.environment['FLUTTER_TEST_OUTPUTS_DIR'] ?? '${galleryDirectory.path}/build';
     final Map<String, dynamic> summary = json.decode(
-      file('${galleryDirectory.path}/build/$timelineSummaryFile.json').readAsStringSync(),
+      file('$testOutputDirectory/$timelineSummaryFile.json').readAsStringSync(),
     ) as Map<String, dynamic>;
 
     if (transitionDurationFile != null) {
       final Map<String, dynamic> original = json.decode(
-        file('${galleryDirectory.path}/build/$transitionDurationFile.json').readAsStringSync(),
+        file('$testOutputDirectory/$transitionDurationFile.json').readAsStringSync(),
       ) as Map<String, dynamic>;
       final Map<String, List<int>> transitions = <String, List<int>>{};
       for (final String key in original.keys) {
@@ -98,15 +120,14 @@ class GalleryTransitionTest {
       summary['transitions'] = transitions;
       summary['missed_transition_count'] = _countMissedTransitions(transitions);
     }
-    final List<String> detailFiles = <String>[
-      if (transitionDurationFile != null)
-        '${galleryDirectory.path}/build/$transitionDurationFile.json',
-      if (timelineTraceFile != null)
-        '${galleryDirectory.path}/build/$timelineTraceFile.json'
-    ];
 
     return TaskResult.success(summary,
-      detailFiles: detailFiles.isNotEmpty ? detailFiles : null,
+      detailFiles: <String>[
+        if (transitionDurationFile != null)
+          '$testOutputDirectory/$transitionDurationFile.json',
+        if (timelineTraceFile != null)
+          '$testOutputDirectory/$timelineTraceFile.json'
+      ],
       benchmarkScoreKeys: <String>[
         if (transitionDurationFile != null)
           'missed_transition_count',
